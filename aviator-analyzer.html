@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Analizador de Aviator - Dashboard de Análisis</title>
+    <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-database.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/brain.js@2.0.0-beta/dist/browser.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        #chart { max-width: 800px; margin: 20px auto; }
+        #predictions { margin: 20px; padding: 10px; border: 1px solid #ccc; }
+        #signals { list-style-type: none; padding: 0; }
+        #signals li { padding: 5px; background: #f0f0f0; margin: 5px 0; }
+    </style>
+</head>
+<body>
+    <h1>Dashboard de Análisis para Aviator</h1>
+    <p>Esta herramienta analiza datos históricos de multiplicadores para identificar patrones y sugerir momentos potenciales donde el multiplicador podría superar 3x, 5x o 10x, basado en análisis estadístico. Recuerda: esto es solo para estudio y maximizar tu tiempo; el juego es aleatorio y no garantiza resultados.</p>
+    
+    <canvas id="multiplierChart"></canvas>
+    <div id="predictions">
+        <h2>Predicciones y Señales</h2>
+        <ul id="signals"></ul>
+    </div>
+
+    <script>
+        // Firebase configuration (usa la tuya)
+        const firebaseConfig = {
+            apiKey: "AIzaSyDuEnNg5XutDF3Ka90o6GFKTazBLR9NnSs",
+            authDomain: "aviator-analyzer-b29a7.firebaseapp.com",
+            databaseURL: "https://aviator-analyzer-b29a7-default-rtdb.firebaseio.com",
+            projectId: "aviator-analyzer-b29a7",
+            storageBucket: "aviator-analyzer-b29a7.firebasestorage.app",
+            messagingSenderId: "575063626276",
+            appId: "1:575063626276:web:5f640e41f0ad791d6a3eb1",
+            measurementId: "G-325QCBSQMH"
+        };
+
+        // Inicializar Firebase
+        const app = firebase.initializeApp(firebaseConfig);
+        const database = firebase.database(app);
+        const crashesRef = database.ref('crashes');
+
+        // Configuración del análisis
+        const minHistoryForPrediction = 10;
+        const lookbackForPrediction = 5;
+        const predictionThresholds = [3, 5, 10];  // Señales para >3x, >5x, >10x
+        let localCrashes = [];
+        let net = new brain.NeuralNetwork({ hiddenLayers: [3] });
+        let chart;
+
+        // Normalizar valores
+        function normalize(value) {
+            return Math.log(value + 1) / Math.log(100 + 1);
+        }
+
+        // Entrenar modelo
+        function trainModel() {
+            if (localCrashes.length < minHistoryForPrediction + lookbackForPrediction) return;
+            const data = [];
+            for (let i = lookbackForPrediction; i < localCrashes.length; i++) {
+                const input = localCrashes.slice(i - lookbackForPrediction, i).map(normalize);
+                const output = predictionThresholds.map(threshold => localCrashes[i] > threshold ? 1 : 0);
+                data.push({ input, output });
+            }
+            net.train(data, { iterations: 200, log: true, logPeriod: 50 });
+            console.log('Modelo entrenado.');
+        }
+
+        // Predecir para próximo round
+        function predictNext() {
+            if (localCrashes.length < lookbackForPrediction) return [];
+            const input = localCrashes.slice(-lookbackForPrediction).map(normalize);
+            const predictions = net.run(input);
+            const signals = predictionThresholds.map((threshold, index) => {
+                const confidence = predictions[index];
+                return confidence > 0.5 ? `Señal potencial para >${threshold}x (confianza: ${Math.round(confidence * 100)}%)` : null;
+            }).filter(signal => signal);
+            return signals;
+        }
+
+        // Actualizar gráfico
+        function updateChart() {
+            const ctx = document.getElementById('multiplierChart').getContext('2d');
+            if (chart) chart.destroy();
+            chart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: localCrashes.map((_, i) => `Ronda ${i + 1}`),
+                    datasets: [{
+                        label: 'Multiplicadores Históricos',
+                        data: localCrashes,
+                        borderColor: 'blue',
+                        fill: false
+                    }]
+                },
+                options: {
+                    scales: { y: { beginAtZero: true } }
+                }
+            });
+        }
+
+        // Mostrar señales
+        function showSignals(signals) {
+            const signalsList = document.getElementById('signals');
+            signalsList.innerHTML = '';
+            signals.forEach(signal => {
+                const li = document.createElement('li');
+                li.textContent = signal;
+                signalsList.appendChild(li);
+            });
+        }
+
+        // Escuchar datos en tiempo real
+        crashesRef.on('value', (snapshot) => {
+            const data = snapshot.val();
+            localCrashes = data ? Object.values(data) : [];
+            console.log(`Datos cargados: ${localCrashes.length} rondas.`);
+            if (localCrashes.length >= minHistoryForPrediction) {
+                trainModel();
+                updateChart();
+                const signals = predictNext();
+                showSignals(signals);
+            }
+        });
+
+        console.log('Dashboard iniciado. Esperando datos...');
+    </script>
+</body>
+</html>
